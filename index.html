@@ -32,6 +32,8 @@
     <section class="hero" aria-labelledby="titel">
       <div class="hero-media">
         <img src="assets/hero.webp" alt="Ein einzelnes goldenes Licht zerspringt im Dunkeln in unzählige Funken und Fäden." width="1280" height="720">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <canvas class="hero-sparks" aria-hidden="true"></canvas>
       </div>
       <div class="hero-inner">
         <svg class="hero-symbol" viewBox="0 0 42 42" aria-hidden="true" focusable="false"><circle cx="21" cy="21" r="15.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
@@ -339,6 +341,154 @@
         document.getElementById("nav-toggle").checked = false;
       });
     });
+
+    (function () {
+      var canvas = document.querySelector(".hero-sparks");
+      var media = document.querySelector(".hero-media");
+      if (!canvas || !media || !canvas.getContext) return;
+
+      var ctx = canvas.getContext("2d");
+      var particles = [];
+      var raf = 0;
+      var running = false;
+      var visible = true;
+      var reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+      function countForWidth(width) {
+        return width < 600 ? 22 : 42;
+      }
+
+      function spawn(width, height, randomLife) {
+        var cx = width * 0.5;
+        var cy = height * 0.46;
+        var angle = Math.random() * Math.PI * 2;
+        var shard = Math.random() < 0.28;
+        return {
+          x: cx,
+          y: cy,
+          vx: Math.cos(angle) * (0.08 + Math.random() * 0.22),
+          vy: Math.sin(angle) * (0.08 + Math.random() * 0.22),
+          size: shard ? 1 + Math.random() * 1.6 : 0.6 + Math.random() * 1.4,
+          length: shard ? 6 + Math.random() * 14 : 0,
+          angle: angle,
+          alpha: 0,
+          maxAlpha: 0.18 + Math.random() * 0.32,
+          life: randomLife ? Math.random() : 0,
+          decay: 0.0012 + Math.random() * 0.0018,
+          warm: Math.random()
+        };
+      }
+
+      function resize() {
+        var rect = media.getBoundingClientRect();
+        var dpr = Math.min(window.devicePixelRatio || 1, 2);
+        var width = Math.max(1, Math.round(rect.width));
+        var height = Math.max(1, Math.round(rect.height));
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+        canvas.style.width = width + "px";
+        canvas.style.height = height + "px";
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        var n = countForWidth(width);
+        particles = [];
+        for (var i = 0; i < n; i += 1) {
+          var p = spawn(width, height, true);
+          p.x += p.vx * p.life * 420;
+          p.y += p.vy * p.life * 420;
+          particles.push(p);
+        }
+      }
+
+      function tick() {
+        if (!running) return;
+        var width = canvas.clientWidth;
+        var height = canvas.clientHeight;
+        ctx.clearRect(0, 0, width, height);
+        for (var i = 0; i < particles.length; i += 1) {
+          var p = particles[i];
+          p.life += p.decay;
+          p.x += p.vx;
+          p.y += p.vy;
+          if (p.life < 0.18) p.alpha = p.maxAlpha * (p.life / 0.18);
+          else if (p.life > 0.78) p.alpha = p.maxAlpha * (1 - (p.life - 0.78) / 0.22);
+          else p.alpha = p.maxAlpha;
+          if (p.life >= 1 || p.x < -20 || p.y < -20 || p.x > width + 20 || p.y > height + 20) {
+            particles[i] = spawn(width, height, false);
+            continue;
+          }
+          var gold = p.warm > 0.55 ? "244, 213, 141" : "232, 195, 106";
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.angle);
+          ctx.globalAlpha = p.alpha;
+          if (p.length) {
+            var grad = ctx.createLinearGradient(-p.length, 0, p.length, 0);
+            grad.addColorStop(0, "rgba(" + gold + ", 0)");
+            grad.addColorStop(0.5, "rgba(" + gold + ", 1)");
+            grad.addColorStop(1, "rgba(" + gold + ", 0)");
+            ctx.fillStyle = grad;
+            ctx.fillRect(-p.length, -p.size * 0.35, p.length * 2, p.size * 0.7);
+          } else {
+            ctx.fillStyle = "rgba(" + gold + ", 1)";
+            ctx.beginPath();
+            ctx.arc(0, 0, p.size, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+        raf = window.requestAnimationFrame(tick);
+      }
+
+      function stop() {
+        running = false;
+        if (raf) window.cancelAnimationFrame(raf);
+        raf = 0;
+        ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      }
+
+      function start() {
+        if (reduced.matches || !visible || document.hidden) {
+          stop();
+          return;
+        }
+        if (running) return;
+        running = true;
+        raf = window.requestAnimationFrame(tick);
+      }
+
+      function sync() {
+        if (reduced.matches) {
+          stop();
+          canvas.hidden = true;
+          return;
+        }
+        canvas.hidden = false;
+        resize();
+        start();
+      }
+
+      window.addEventListener("resize", function () {
+        if (!reduced.matches) resize();
+      });
+      document.addEventListener("visibilitychange", function () {
+        if (document.hidden) stop();
+        else start();
+      });
+      if (typeof reduced.addEventListener === "function") {
+        reduced.addEventListener("change", sync);
+      } else if (typeof reduced.addListener === "function") {
+        reduced.addListener(sync);
+      }
+      if ("IntersectionObserver" in window) {
+        var observer = new IntersectionObserver(function (entries) {
+          visible = entries[0] && entries[0].isIntersecting;
+          if (visible) start();
+          else stop();
+        }, { threshold: 0.05 });
+        observer.observe(media);
+      }
+      sync();
+    })();
   </script>
 </body>
 </html>
